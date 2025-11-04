@@ -10,11 +10,11 @@ Embeddable Next.js + Vercel AI SDK chat widget that proxies the monorepo `/chat`
 
 ## Submodule Workflow
 ```bash
-git submodule add https://github.com/rpampin-cresteo/chatbot-widget.git 08-widget
-cd 08-widget && pnpm install
+git submodule add https://github.com/rpampin-cresteo/chatbot-widget.git packages/07-widget
+cd packages/07-widget && pnpm install
 git commit -m "Implement chatbot widget (Step 8)" && git push origin main
-cd .. && git add 08-widget .gitmodules
-git commit -m "Update submodule pointer: 08-widget"
+cd .. && git add packages/07-widget .gitmodules
+git commit -m "Update submodule pointer: packages/07-widget"
 git push
 ```
 
@@ -35,7 +35,7 @@ pnpm lint
 pnpm typecheck
 pnpm build && pnpm start
 ```
-Run `pnpm dev:all` from the monorepo root to launch `/search`, `/chat`, and `/08-widget` together.
+Run `pnpm dev:all` from the monorepo root to launch `/search`, `/chat`, and `/07-widget` together.
 
 ## Validation
 - Confirm streaming tokens, citation rendering, and feedback posts while `pnpm dev:all` is running.
