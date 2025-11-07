@@ -20,9 +20,9 @@ git push
 
 ## Environment
 Copy `.env.example` to `.env` (auto-created on `pnpm dev` if missing) and set:
-- `CHAT_API_URL` (default `http://localhost:3002/api/chat`)
+- `CHAT_API_URL` (default `http://localhost:6060/api/chat`)
 - `WIDGET_BASE_URL` (default `http://localhost:3003`)
-- `ALLOWED_ORIGINS` (e.g. `http://localhost:3001,http://localhost:3002,http://localhost:3003`)
+- `ALLOWED_ORIGINS` (e.g. `http://localhost:4000,http://localhost:3003`)
 - `SESSION_COOKIE_NAME`, `SESSION_COOKIE_SECRET`, `SESSION_COOKIE_MAX_AGE_DAYS`
 - Optional `REDIS_URL`, `REDIS_TOKEN`, `SERVER_MEMORY_ENABLED=true` for shared summaries
 - Azure OpenAI variables kept in sync with the `/chat` submodule

@@ -5,7 +5,7 @@
   "description": "Production-ready chat widget powered by Next.js and the Vercel AI SDK, designed to connect to the ChatAI container monorepo /chat backend.",
   "author": "Cresteo",
   "license": "MIT",
-  "packageManager": "pnpm@9.12.0",
+  "packageManager": "pnpm@9.12.3",
   "engines": {
     "node": ">=20.0.0"
   },

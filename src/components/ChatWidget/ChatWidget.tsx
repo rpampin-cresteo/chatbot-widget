@@ -69,6 +69,8 @@ export const ChatWidget = ({ mode = 'embedded' }: ChatWidgetProps) => {
   const createdAtRef = useRef<Map<string, string>>(new Map());
   const hasHydratedHistory = useRef(false);
 
+  const pendingPromptRef = useRef('');
+
   const {
     messages,
     input,
@@ -78,6 +80,7 @@ export const ChatWidget = ({ mode = 'embedded' }: ChatWidgetProps) => {
     stop,
     reload,
     setMessages,
+    setInput,
     data
   } = useChat({
     api: '/api/chat',
@@ -89,10 +92,40 @@ export const ChatWidget = ({ mode = 'embedded' }: ChatWidgetProps) => {
     onResponse: () => {
       setSources([]);
       setFeedback(null);
+      pendingPromptRef.current = '';
     },
     onFinish: (assistantMessage) => {
       ensureMessageId(assistantMessage);
       setFeedback({ messageId: assistantMessage.id, rating: 'neutral' });
+      pendingPromptRef.current = '';
+    },
+    onError: (error) => {
+      console.error('[widget] Chat request failed', error);
+      const pendingPrompt = pendingPromptRef.current;
+      setInput(pendingPrompt);
+      setMessages((current) => {
+        const restored = [...current];
+        const hasUserMessage =
+          pendingPrompt &&
+          restored.some((message) => message.role === 'user' && message.content === pendingPrompt);
+        if (!hasUserMessage && pendingPrompt) {
+          restored.push({
+            id: uuid(),
+            role: 'user',
+            content: pendingPrompt,
+            createdAt: nowIso()
+          });
+        }
+        restored.push({
+          id: uuid(),
+          role: 'assistant',
+          content:
+            'I could not reach the chat service right now. Please check that /packages/06-chat is running with valid Azure credentials and try again.',
+          createdAt: nowIso()
+        });
+        return restored;
+      });
+      pendingPromptRef.current = '';
     }
   });
 
@@ -229,6 +262,7 @@ export const ChatWidget = ({ mode = 'embedded' }: ChatWidgetProps) => {
       if (!input.trim()) {
         return;
       }
+      pendingPromptRef.current = input.trim();
       handleSubmit(event);
     },
     [handleSubmit, input]

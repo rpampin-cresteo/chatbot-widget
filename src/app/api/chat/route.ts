@@ -3,6 +3,7 @@ import {
   StreamingTextResponse,
   experimental_StreamData as ExperimentalStreamData
 } from 'ai';
+import { formatStreamPart } from '@ai-sdk/ui-utils';
 import { z } from 'zod';
 
 import { ensureSession } from '@/lib/auth/session';
@@ -70,6 +71,108 @@ const sanitizeMessages = (messages: z.infer<typeof messageSchema>[]): ChatReques
     content: sanitizeContent(message.content)
   }));
 
+const toAiStream = (rawStream: ReadableStream<Uint8Array>) => {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      const reader = rawStream.getReader();
+      let buffer = '';
+      let finished = false;
+
+      const enqueue = (type: string, value: unknown) => {
+        controller.enqueue(encoder.encode(formatStreamPart(type, value)));
+      };
+
+      const processEvent = (rawEvent: string) => {
+        const dataLines = rawEvent
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice(5).trim());
+
+        if (dataLines.length === 0) {
+          return;
+        }
+
+        const payload = dataLines.join('');
+        if (payload === '[DONE]') {
+          finished = true;
+          return;
+        }
+
+        try {
+          const parsed = JSON.parse(payload) as {
+            type?: string;
+            content?: string;
+            delta?: string;
+            error?: string;
+            payload?: unknown;
+          };
+
+          switch (parsed.type) {
+            case 'token': {
+              const token = parsed.content ?? parsed.delta;
+              if (typeof token === 'string' && token.length > 0) {
+                enqueue('text', token);
+              }
+              break;
+            }
+            case 'error': {
+              enqueue('error', parsed.error ?? 'Upstream chat error');
+              break;
+            }
+            case 'final': {
+              enqueue('finish_message', {
+                finishReason: 'stop'
+              });
+              break;
+            }
+            default:
+              break;
+          }
+        } catch (error) {
+          console.warn('[widget] failed to parse upstream chunk', error);
+        }
+      };
+
+      const pump = async () => {
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) {
+              if (buffer.length > 0) {
+                processEvent(buffer);
+                buffer = '';
+              }
+              break;
+            }
+            buffer += decoder.decode(value, { stream: true });
+            let boundary: number;
+            while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+              const rawEvent = buffer.slice(0, boundary);
+              buffer = buffer.slice(boundary + 2);
+              processEvent(rawEvent);
+            }
+          }
+
+          if (!finished) {
+            enqueue('finish_message', {
+              finishReason: 'stop'
+            });
+          }
+          controller.close();
+        } catch (error) {
+          controller.error(error);
+        }
+      };
+
+      void pump();
+    }
+  });
+};
+
 const forwardChatRequest = async (
   request: NextRequest,
   payload: ReturnType<typeof payloadSchema.parse>,
@@ -77,6 +180,40 @@ const forwardChatRequest = async (
   serverMemory: string | null,
   streamData: InstanceType<typeof ExperimentalStreamData>
 ) => {
+  const latestUserIndex = [...payload.messages]
+    .reverse()
+    .findIndex((message) => message.role === 'user');
+  const actualIndex =
+    latestUserIndex === -1 ? -1 : payload.messages.length - 1 - latestUserIndex;
+  const latestUserMessage =
+    actualIndex >= 0 ? payload.messages[actualIndex] : undefined;
+
+  if (!latestUserMessage) {
+    throw new Error('No user message found to forward');
+  }
+
+  const history = payload.messages
+    .map((message) => ({
+      role: message.role,
+      content: message.content
+    }))
+    .filter((_message, index) => index !== actualIndex);
+
+  const body = {
+    message: latestUserMessage.content,
+    history,
+    metadata: {
+      ...payload.metadata,
+      userId,
+      serverMemory
+    }
+  };
+
+  console.log('[widget] forwarding chat request', {
+    target: env.CHAT_API_URL,
+    history: history.length
+  });
+
   const upstreamResponse = await fetch(env.CHAT_API_URL, {
     method: 'POST',
     headers: {
@@ -85,24 +222,22 @@ const forwardChatRequest = async (
       'X-Widget-UserId': userId,
       'X-Widget-Origin': normalizeOrigin(request.headers.get('origin')) ?? ''
     },
-    body: JSON.stringify({
-      ...payload,
-      metadata: {
-        ...payload.metadata,
-        userId,
-        serverMemory
-      }
-    })
+    body: JSON.stringify(body)
   });
 
   if (!upstreamResponse.ok || !upstreamResponse.body) {
     const errorText = await upstreamResponse.text().catch(() => upstreamResponse.statusText);
+    console.error('[widget] upstream chat error', {
+      status: upstreamResponse.status,
+      errorText
+    });
     throw new Error(
       `Upstream chat service responded with ${upstreamResponse.status}: ${errorText}`
     );
   }
 
   const [forwardStream, inspectStream] = upstreamResponse.body.tee();
+  const transformedStream = toAiStream(forwardStream);
 
   let assistantBuffer = '';
 
@@ -173,7 +308,7 @@ const forwardChatRequest = async (
     }
   });
 
-  return { stream: forwardStream };
+  return { stream: transformedStream };
 };
 
 export async function OPTIONS(request: NextRequest) {
